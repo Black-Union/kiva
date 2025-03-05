@@ -1,31 +1,5 @@
 const fs = require('fs').promises;
 const axios = require('axios');
-const Table = require('cli-table');
-
-let proxyList = [];
-
-const previousBalances = {};
-
-const loadTokens = async () => {
-    try {
-        const data = await fs.readFile('token.txt', 'utf8');
-        return data.trim().split('\n').map(token => token.trim());
-    } catch (error) {
-        console.error('Error loading tokens from token.txt:', error.message);
-        process.exit(1);
-    }
-};
-
-const loadProxies = async () => {
-    try {
-        const data = await fs.readFile('proxies.txt', 'utf8');
-        proxyList = data.trim().split('\n').map(proxy => proxy.trim());
-        console.log(`Loaded ${proxyList.length} proxies from proxies.txt`);
-    } catch (error) {
-        console.error('Error loading proxies from proxies.txt:', error.message);
-        process.exit(1);
-    }
-};
 
 const getHeaders = (token) => ({
     'authority': 'app.kivanet.com',
@@ -46,38 +20,15 @@ const getHeaders = (token) => ({
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
 });
 
-const createAxiosInstance = (proxy) => {
-    if (!proxy) return axios.create();
-
-    const [protocol, rest] = proxy.split('://');
-    const [auth, hostPort] = rest.split('@');
-    const [username, password] = auth.split(':');
-    const [host, port] = hostPort.split(':');
-
-    const proxyConfig = {
-        host,
-        port: parseInt(port),
-        auth: { username, password },
-        protocol
-    };
-
-    return axios.create({
-        proxy: proxyConfig
-    });
-};
-
-const fetchWithProxyRotation = async (url, options, proxies, retries = 0) => {
-    if (retries >= proxies.length) throw new Error('All proxies failed');
-    const proxy = proxies[retries];
-    const instance = createAxiosInstance(proxy);
+async function getToken() {
     try {
-        const response = await instance.get(url, options);
-        return { data: response.data, proxy };
+        const token = await fs.readFile('token.txt', 'utf8');
+        return token.trim();
     } catch (error) {
-        console.error(`Proxy ${proxy} failed: ${error.message}`);
-        return fetchWithProxyRotation(url, options, proxies, retries + 1);
+        console.error('Error loading token from token.txt:', error.message);
+        process.exit(1);
     }
-};
+}
 
 function calculateMiningTime(signTime, nowTime) {
     const timeDiffMs = nowTime - signTime;
@@ -85,94 +36,93 @@ function calculateMiningTime(signTime, nowTime) {
     const hours = Math.floor(timeDiffSec / 3600);
     const minutes = Math.floor((timeDiffSec % 3600) / 60);
     const seconds = Math.floor(timeDiffSec % 60);
-    return `${hours}h ${minutes}m ${seconds}s`;
+    return `${hours} hours ${minutes} minutes ${seconds} seconds`;
 }
 
-async function getUserInfo(token, proxy) {
-    const result = await fetchWithProxyRotation('https://app.kivanet.com/api/user/getUserInfo', { headers: getHeaders(token) }, proxyList);
-    return { data: result.data.object, proxy: result.proxy };
+async function getUserInfo(token) {
+    try {
+        const response = await axios.get(
+            'https://app.kivanet.com/api/user/getUserInfo',
+            { headers: getHeaders(token) }
+        );
+        return response.data.object;
+    } catch (error) {
+        console.error('Error fetching user info:', error.response?.data || error.message);
+        return null;
+    }
 }
 
-async function getMyAccountInfo(token, proxy) {
-    const result = await fetchWithProxyRotation('https://app.kivanet.com/api/user/getMyAccountInfo', { headers: getHeaders(token) }, proxyList);
-    return { data: result.data.object, proxy: result.proxy };
+async function getMyAccountInfo(token) {
+    try {
+        const response = await axios.get(
+            'https://app.kivanet.com/api/user/getMyAccountInfo',
+            { headers: getHeaders(token) }
+        );
+        return response.data.object;
+    } catch (error) {
+        console.error('Error fetching account info:', error.response?.data || error.message);
+        return null;
+    }
 }
 
-async function getSignInfo(token, proxy) {
-    const result = await fetchWithProxyRotation('https://app.kivanet.com/api/user/getSignInfo', { headers: getHeaders(token) }, proxyList);
-    return { data: result.data.object, proxy: result.proxy };
+async function getSignInfo(token) {
+    try {
+        const response = await axios.get(
+            'https://app.kivanet.com/api/user/getSignInfo',
+            { headers: getHeaders(token) }
+        );
+        return response.data.object;
+    } catch (error) {
+        console.error('Error fetching sign info:', error.response?.data || error.message);
+        return null;
+    }
 }
 
-function displayStats(accountsData) {
-    console.clear();
+async function displayAccountInfo(token) {
+    const userInfo = await getUserInfo(token);
+    const accountInfo = await getMyAccountInfo(token);
+    const signInfo = await getSignInfo(token);
 
-    const table = new Table({
-        head: ['ID', 'Nickname', 'Balance', 'Mining Time', 'Proxy', 'Status'],
-        colWidths: [10, 15, 15, 15, 30, 15]
-    });
+    if (userInfo) {
+        console.log('=== KIVA AUTO BOT| AIRDROP INSIDERS ===');
+        console.log('ID:', userInfo.id);
+        console.log('Email:', userInfo.email);
+        console.log('Nickname:', userInfo.nickName);
+        console.log('Invite Code:', userInfo.inviteNum);
+        console.log('Avatar:', userInfo.avatar);
+        console.log('Created Date:', userInfo.createTime);
+        console.log('Invite Count:', userInfo.inviteCount);
+    }
 
-    accountsData.forEach(account => {
-        table.push([
-            account.id || 'N/A',
-            account.nickname || 'N/A',
-            account.balance || 'N/A',
-            account.miningTime || 'N/A',
-            account.proxy || 'N/A',
-            account.status || 'N/A'
-        ]);
-    });
+    if (accountInfo && signInfo) {
+        console.log('\n=== Mining Status ===');
+        const miningTime = calculateMiningTime(parseInt(signInfo.signTime), parseInt(signInfo.nowTime));
+        console.log('Mining Time:', miningTime);
+        console.log('Balance:', `${accountInfo.balance} Kiva`);
+    }
 
-    console.log(table.toString());
-
-    console.log('\n=== Mining Progress ===');
-    accountsData.forEach(account => {
-        if (account.id && account.balance) {
-            const currentBalance = parseFloat(account.balance.split(' ')[0]);
-            const prevBalance = previousBalances[account.id] || currentBalance;
-            const increment = currentBalance - prevBalance;
-            previousBalances[account.id] = currentBalance;
-
-            console.log(`ID: ${account.id} | Nickname: ${account.nickname} | Mining Increment: ${increment >= 0 ? '+' : ''}${increment.toFixed(4)} Kiva`);
-        }
-    });
     console.log('====================\n');
 }
 
-async function processAccount(token, accountIndex) {
-    let currentProxy = proxyList[0];
-    const stats = { id: null, nickname: null, balance: null, miningTime: null, proxy: currentProxy, status: 'Running' };
-
-    try {
-        const userInfo = await getUserInfo(token, currentProxy);
-        stats.id = userInfo.data.id;
-        stats.nickname = userInfo.data.nickName;
-        currentProxy = userInfo.proxy;
-
-        const accountInfo = await getMyAccountInfo(token, currentProxy);
-        stats.balance = `${accountInfo.data.balance} Kiva`;
-        currentProxy = accountInfo.proxy;
-
-        const signInfo = await getSignInfo(token, currentProxy);
-        stats.miningTime = calculateMiningTime(parseInt(signInfo.data.signTime), parseInt(signInfo.data.nowTime));
-        stats.proxy = signInfo.proxy;
-
-    } catch (error) {
-        stats.status = `Error: ${error.message}`;
-    }
-
-    return stats;
-}
-
 async function runBot() {
-    await loadProxies();
-    const tokens = await loadTokens();
-    console.log(`Loaded ${tokens.length} tokens from token.txt`);
+    const token = await getToken();
+    console.log('Token loaded from token.txt');
+
+    await displayAccountInfo(token);
 
     setInterval(async () => {
-        const promises = tokens.map((token, index) => processAccount(token, index));
-        const results = await Promise.all(promises);
-        displayStats(results);
-    }, 60 * 1000);
+        const accountInfo = await getMyAccountInfo(token);
+        const signInfo = await getSignInfo(token);
+
+        if (accountInfo && signInfo) {
+            const miningTime = calculateMiningTime(parseInt(signInfo.signTime), parseInt(signInfo.nowTime));
+            console.log('=== Minute-by-Minute Update ===');
+            console.log('Mining Time:', miningTime);
+            console.log('Balance:', `${accountInfo.balance} Kiva`);
+            console.log('========================\n');
+        }
+    }, 60 * 1000); 
 }
 
+// Run the bot
 runBot().catch(console.error);
